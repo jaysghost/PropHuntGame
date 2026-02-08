@@ -33,8 +33,85 @@ local WheelState = {
 	playerMap = {}, -- Maps segment index to player
 	nameUpdateConnection = nil, -- Connection for auto-updating names
 	highlightedSegment = nil, -- Currently highlighted segment index
-	defaultMaterial = Enum.Material.SmoothPlastic -- Default wheel piece material
+	defaultMaterial = Enum.Material.SmoothPlastic, -- Default wheel piece material
+	selector = nil, -- Reference to the selector part
+	raycastParams = nil -- Pre-configured raycast parameters
 }
+
+-- NEW: Raycast-based segment detection (ACCURATE!)
+local function GetCurrentWinningSegmentByRay()
+	-- Make sure we have the selector reference
+	if not WheelState.selector then
+		-- Try to find it if we don't have it yet
+		local wheelParent = workspace:FindFirstChild(WHEEL_PARENT_NAME)
+		if wheelParent then
+			WheelState.selector = wheelParent:FindFirstChild(SELECTOR_NAME)
+		end
+
+		-- If still not found, fall back to mathematical method
+		if not WheelState.selector then
+			warn("Selector not found, falling back to math method")
+			return GetCurrentWinningSegment()
+		end
+	end
+
+	-- Initialize raycast parameters if needed
+	if not WheelState.raycastParams then
+		WheelState.raycastParams = RaycastParams.new()
+		WheelState.raycastParams.FilterType = Enum.RaycastFilterType.Include
+
+		-- Create whitelist of only wheel pieces
+		local wheelPiecesInstances = {}
+		for _, piece in ipairs(WheelState.wheelPieces) do
+			table.insert(wheelPiecesInstances, piece)
+		end
+		WheelState.raycastParams.FilterDescendantsInstances = wheelPiecesInstances
+	end
+
+	-- Cast ray from selector downward into the wheel
+	local selectorCFrame = WheelState.selector.CFrame
+	local rayOrigin = selectorCFrame.Position
+	local rayDirection = Vector3.new(-15, 0, 0) -- Pointing in -X direction (into wheel)
+
+	local rayResult = workspace:Raycast(rayOrigin, rayDirection, WheelState.raycastParams)
+
+	-- If we hit a wheel piece, find its index
+	if rayResult and rayResult.Instance then
+		for i, piece in ipairs(WheelState.wheelPieces) do
+			if rayResult.Instance == piece then
+				return i
+			end
+		end
+	end
+
+	-- Fallback to the mathematical method if raycast fails
+	return GetCurrentWinningSegment()
+end
+
+-- Calculate the winning segment based on current wheel rotation (FALLBACK)
+local function GetCurrentWinningSegment()
+	-- Get the current rotation on X axis (pitch) from the CFrame
+	local _, rotation = WheelState.wheelCenter.CFrame:ToEulerAnglesXYZ()
+
+	-- Convert to degrees and normalize to 0-360
+	local degrees = math.deg(rotation) % 360
+
+	-- Each segment is 22.5 degrees (360 / 16)
+	-- Calculate which segment is at the top (under the selector)
+	local segmentIndex = math.floor(degrees / WheelState.segmentAngle) + 1
+
+	-- Adjust for clockwise rotation
+	segmentIndex = 17 - segmentIndex
+
+	-- Handle wrap-around
+	if segmentIndex > 16 then
+		segmentIndex = segmentIndex - 16
+	elseif segmentIndex <= 0 then
+		segmentIndex = segmentIndex + 16
+	end
+
+	return segmentIndex
+end
 
 -- Highlight the current segment and reset previous one
 local function UpdateHighlightedSegment(segmentIndex)
@@ -84,8 +161,6 @@ end
 
 -- Initialize the wheel by finding parts and creating welds
 local function InitializeWheel()
-
-
 	-- Find the wheel parent container
 	local wheelParent = workspace:FindFirstChild(WHEEL_PARENT_NAME)
 	if not wheelParent then
@@ -98,6 +173,15 @@ local function InitializeWheel()
 	if not wheelCenter then
 		warn("WheelCenter not found in " .. WHEEL_PARENT_NAME .. "!")
 		return false
+	end
+
+	-- Find the selector
+	local selector = wheelParent:FindFirstChild(SELECTOR_NAME)
+	if not selector then
+		warn("Selector not found in " .. WHEEL_PARENT_NAME .. "!")
+		-- Continue anyway, we'll use mathematical method as fallback
+	else
+		WheelState.selector = selector
 	end
 
 	-- Find all wheel pieces in the parent
@@ -178,10 +262,10 @@ local function InitializeWheel()
 	WheelState.wheelBorders = wheelBorders
 	WheelState.initialized = true
 
-
 	-- Start dynamic name updates
 	StartDynamicNameUpdates()
 
+	print("Wheel successfully initialized with " .. #wheelPieces .. " segments")
 	return true
 end
 
@@ -262,7 +346,6 @@ function StartDynamicNameUpdates()
 			lastUpdate = 0
 		end
 	end)
-
 end
 
 -- Stop dynamic name updates
@@ -272,31 +355,6 @@ local function StopDynamicNameUpdates()
 		WheelState.nameUpdateConnection = nil
 		print("Stopped dynamic name updates")
 	end
-end
-
--- Calculate the winning segment based on current wheel rotation
-local function GetCurrentWinningSegment()
-	-- Get the current rotation on X axis (pitch) from the CFrame
-	local _, rotation = WheelState.wheelCenter.CFrame:ToEulerAnglesXYZ()
-
-	-- Convert to degrees and normalize to 0-360
-	local degrees = math.deg(rotation) % 360
-
-	-- Each segment is 22.5 degrees (360 / 16)
-	-- Calculate which segment is at the top (under the selector)
-	local segmentIndex = math.floor(degrees / WheelState.segmentAngle) + 1
-
-	-- Adjust for clockwise rotation
-	segmentIndex = 17 - segmentIndex
-
-	-- Handle wrap-around
-	if segmentIndex > 16 then
-		segmentIndex = segmentIndex - 16
-	elseif segmentIndex <= 0 then
-		segmentIndex = segmentIndex + 16
-	end
-
-	return segmentIndex
 end
 
 -- Set the voting status
@@ -361,16 +419,16 @@ local function SpinWheel()
 		-- Update wheel position
 		WheelState.wheelCenter.CFrame = WheelState.wheelCenter.CFrame * CFrame.Angles(rotationThisFrame, 0, 0)
 
-		-- Highlight current segment under selector
-		local currentSegment = GetCurrentWinningSegment()
+		-- ✅ FIXED: Use raycast method for accurate segment detection
+		local currentSegment = GetCurrentWinningSegmentByRay()
 		UpdateHighlightedSegment(currentSegment)
 
 		-- Check if we're done spinning
 		if elapsed >= TOTAL_SPIN_TIME then
 			spinConnection:Disconnect()
 
-			-- Determine winner
-			local winningSegmentIndex = GetCurrentWinningSegment()
+			-- Determine winner using raycast
+			local winningSegmentIndex = GetCurrentWinningSegmentByRay()
 			local winner = WheelState.playerMap[winningSegmentIndex]
 
 			if winner then
@@ -403,8 +461,8 @@ local function SpinWheel()
 	end
 	WheelState.spinComplete = false
 
-	-- Return the winner
-	local winningSegmentIndex = GetCurrentWinningSegment()
+	-- Return the winner using raycast
+	local winningSegmentIndex = GetCurrentWinningSegmentByRay()
 	return WheelState.playerMap[winningSegmentIndex]
 end
 
@@ -416,5 +474,6 @@ InitializeWheel()
 return {
 	InitializeWheel = InitializeWheel,
 	SpinWheel = SpinWheel,
-	SetVotingOver = SetVotingOver
+	SetVotingOver = SetVotingOver,
+	GetCurrentWinningSegmentByRay = GetCurrentWinningSegmentByRay -- For debugging
 }

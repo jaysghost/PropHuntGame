@@ -22,7 +22,7 @@ WheelEffectsController:IntegrateWithSpinner(WheelSpinner)
 
 -- Configuration
 local INTERMISSION_TIME = 10 -- Seconds for voting period
-local MIN_PLAYERS_TO_START =  1 -- Minimum players needed
+local MIN_PLAYERS_TO_START =  2 -- Minimum players needed
 local ROUND_TIME = 60 -- Seconds for round time (1 minute)
 local GRACE_PERIOD_TIME = 10 -- Seconds for grace period
 local TRANSITION_DELAY = 0.5 -- Delay after UI closes before respawning

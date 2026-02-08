@@ -1,39 +1,40 @@
--- WheelEffectsController.lua
--- Module to handle lighting and sound effects for the hunter selection wheel
--- Place in same folder as WheelSpinner or in the Misc folder
+-- WheelEffectsController.lua - FIXED VERSION
+-- This version syncs lighting effects with the actual wheel rotation
 
 local TweenService = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
--- Configuration for effects
 local WheelEffectsController = {
 	-- References
 	wheelCenter = nil,
 	wheelLights = {},
-	lightAngles = {}, -- Store each light's angle relative to center
+	lightAngles = {},
+	wheelPieces = {}, -- NEW: Store wheel pieces for mapping
 	cleanupFunctions = {},
 	soundsFolder = nil,
+	wheelSpinner = nil, -- NEW: Reference to WheelSpinner
 
 	-- Lighting effect settings
-	idleColor = Color3.fromRGB(255, 255, 255),    -- White
-	spinningColor = Color3.fromRGB(255, 215, 0),  -- Gold
-	winnerColor = Color3.fromRGB(0, 255, 100),    -- Green
+	idleColor = Color3.fromRGB(255, 255, 255),
+	spinningColor = Color3.fromRGB(255, 215, 0),
+	winnerColor = Color3.fromRGB(0, 255, 100),
 
 	-- Pattern settings
-	pulseSpeed = 1.5,             -- Seconds per pulse cycle
-	pulseMinBrightness = 0.7,     -- Transparency at dimmest (0-1)
-	pulseMaxBrightness = 0,       -- Transparency at brightest (0-1)
-	twinkleRate = 5,              -- Percentage of lights active at once during twinkle
+	pulseSpeed = 1.5,
+	pulseMinBrightness = 0.7,
+	pulseMaxBrightness = 0,
+	twinkleRate = 5,
 
 	-- Spinning effect settings
-	spinPulseSpeed = 0.5,         -- Seconds per pulse during spin
-	spinnerFlashSpeed = 0.1,      -- Seconds per flash during final selection
-	chaseSegments = 3,            -- Number of segments to light up during chase
+	spinPulseSpeed = 0.5,
+	spinnerFlashSpeed = 0.1,
+	chaseSegments = 3,
 
 	-- Sound effect settings
-	spinStartSoundId = "rbxassetid://5204303410", -- Replace with desired sound
-	spinLoopSoundId = "rbxassetid://142376088",   -- Replace with desired sound
-	spinEndSoundId = "rbxassetid://3307930188",   -- Replace with desired sound
+	spinStartSoundId = "rbxassetid://5204303410",
+	spinLoopSoundId = "rbxassetid://142376088",
+	spinEndSoundId = "rbxassetid://3307930188",
 
 	-- State tracking
 	isSpinning = false,
@@ -44,25 +45,18 @@ local WheelEffectsController = {
 
 -- Calculate the angle of a part relative to the wheel center
 local function calculateAngle(center, part)
-	-- Get positions in XZ plane (ignoring Y since the wheel is vertical)
 	local centerPos = Vector2.new(center.Position.X, center.Position.Z)
 	local partPos = Vector2.new(part.Position.X, part.Position.Z)
-
-	-- Calculate vector from center to part
 	local vector = partPos - centerPos
-
-	-- Calculate angle in radians
 	local angle = math.atan2(vector.Y, vector.X)
 	if angle < 0 then
-		angle = angle + (2 * math.pi) -- Convert to 0-2π range
+		angle = angle + (2 * math.pi)
 	end
-
 	return angle
 end
 
 -- Sort parts by their angular position
 local function sortPartsByAngle(center, parts)
-	-- Calculate angles for all parts
 	local partsWithAngles = {}
 	for i, part in ipairs(parts) do
 		local angle = calculateAngle(center, part)
@@ -72,12 +66,10 @@ local function sortPartsByAngle(center, parts)
 		})
 	end
 
-	-- Sort by angle
 	table.sort(partsWithAngles, function(a, b)
 		return a.angle < b.angle
 	end)
 
-	-- Return sorted parts and their angles
 	local sortedParts = {}
 	local angles = {}
 	for i, data in ipairs(partsWithAngles) do
@@ -88,17 +80,37 @@ local function sortPartsByAngle(center, parts)
 	return sortedParts, angles
 end
 
+-- NEW: Map light index to wheel piece segment
+local function getLightForSegment(self, segmentIndex)
+	-- Each segment has lights nearby
+	-- We need to find which lights correspond to which segments
+
+	-- If we have 16 segments and multiple lights per segment,
+	-- calculate which lights belong to this segment
+	local lightsPerSegment = #self.wheelLights / 16
+	local startLight = math.floor((segmentIndex - 1) * lightsPerSegment) + 1
+	local endLight = math.floor(segmentIndex * lightsPerSegment)
+
+	local lights = {}
+	for i = startLight, endLight do
+		if self.wheelLights[i] then
+			table.insert(lights, self.wheelLights[i])
+		end
+	end
+
+	return lights
+end
+
 -- Initialize the controller
 function WheelEffectsController:Initialize()
 	if self.isInitialized then return end
 
-	-- Set up sounds folder if it doesn't exist
+	-- Set up sounds folder
 	if not ReplicatedStorage:FindFirstChild("WheelEffectSounds") then
 		self.soundsFolder = Instance.new("Folder")
 		self.soundsFolder.Name = "WheelEffectSounds"
 		self.soundsFolder.Parent = ReplicatedStorage
 
-		-- Create sound objects
 		local spinStartSound = Instance.new("Sound")
 		spinStartSound.Name = "SpinStartSound"
 		spinStartSound.SoundId = self.spinStartSoundId
@@ -128,7 +140,6 @@ function WheelEffectsController:Initialize()
 		return false
 	end
 
-	-- Find the wheel center
 	local wheelCenter = wheel:FindFirstChild("WheelCenter")
 	if not wheelCenter then
 		warn("WheelCenter not found in Wheel!")
@@ -150,100 +161,63 @@ function WheelEffectsController:Initialize()
 		return false
 	end
 
-	print("Found " .. #lightParts .. " light parts in wheel")
-
-	-- Sort parts by their angular position around the wheel
+	-- Sort lights by angle for proper mapping
 	self.wheelLights, self.lightAngles = sortPartsByAngle(wheelCenter, lightParts)
 
-	-- Set up initial properties
-	for _, light in ipairs(self.wheelLights) do
-		light.Material = Enum.Material.Neon
-		light.Transparency = 0.7  -- Dim by default
-		light.Color = self.idleColor
+	-- NEW: Find all wheel pieces
+	local wheelPieces = {}
+	for _, child in pairs(wheel:GetDescendants()) do
+		if child:IsA("BasePart") and child.Name == "WheelPiece" then
+			table.insert(wheelPieces, child)
+		end
 	end
+	self.wheelPieces = wheelPieces
 
-	-- Find the selector
-	self.selector = wheel:FindFirstChild("Selector")
+	print("WheelEffectsController initialized with " .. #self.wheelLights .. " lights and " .. #self.wheelPieces .. " pieces")
 
 	self.isInitialized = true
-	print("Wheel Effects Controller initialized with " .. #self.wheelLights .. " lights")
-
-	-- Start idle animations
-	self:StartIdleEffects()
-
 	return true
 end
 
--- Stop all running effects
+-- Stop all active effects
 function WheelEffectsController:StopAllEffects()
-	-- Stop all running functions
-	for _, stopFunc in pairs(self.cleanupFunctions) do
-		if type(stopFunc) == "function" then
-			stopFunc()
-		end
+	for _, cleanup in ipairs(self.cleanupFunctions) do
+		cleanup()
 	end
 	self.cleanupFunctions = {}
 
-	-- Stop any playing sounds
-	for soundName, sound in pairs(self.sounds) do
-		pcall(function()
-			if sound and typeof(sound) == "Instance" and sound:IsA("Sound") then
-				if sound.IsPlaying then
-					sound:Stop()
-				end
-				sound:Destroy()
-			end
-		end)
-	end
-	self.sounds = {}
-
-	-- Reset all lights to default state
+	-- Reset all lights to idle state
 	for _, light in ipairs(self.wheelLights) do
 		light.Transparency = 0.7
 		light.Color = self.idleColor
 	end
 end
 
--- Start idle effects for the wheel
+-- Start idle effects (pulse)
 function WheelEffectsController:StartIdleEffects()
+	if not self.isInitialized then return end
+
 	self:StopAllEffects()
 
-	-- Start gentle pulse wave
-	self:StartPulseEffect()
-
-	-- Start random twinkle
-	self:StartTwinkleEffect()
-
-	print("Started idle wheel effects")
-end
-
--- Create a gentle pulse effect on all lights
-function WheelEffectsController:StartPulseEffect()
 	local isRunning = true
 
 	local thread = task.spawn(function()
-		local startTime = os.clock()
+		local startTime = tick()
 
 		while isRunning do
-			-- Calculate pulse value (0 to 1)
-			local elapsedTime = os.clock() - startTime
-			local pulseCycle = (elapsedTime / self.pulseSpeed) % 1
-			local pulseValue = (math.cos(pulseCycle * math.pi * 2) + 1) / 2 -- 0 to 1
-
-			-- Calculate transparency (blend between min and max brightness)
+			local elapsed = tick() - startTime
+			local pulseValue = (math.sin(elapsed * (2 * math.pi / self.pulseSpeed)) + 1) / 2
 			local transparency = self.pulseMinBrightness + 
 				(self.pulseMaxBrightness - self.pulseMinBrightness) * pulseValue
 
-			-- Apply to all lights
 			for _, light in ipairs(self.wheelLights) do
 				light.Transparency = transparency
 			end
 
-			task.wait(0.05) -- Small step for smooth animation
+			task.wait(0.05)
 		end
 	end)
 
-	-- Store cleanup function
 	local cleanup = function()
 		isRunning = false
 	end
@@ -251,64 +225,13 @@ function WheelEffectsController:StartPulseEffect()
 	table.insert(self.cleanupFunctions, cleanup)
 end
 
--- Create a random twinkling effect
-function WheelEffectsController:StartTwinkleEffect()
-	local isRunning = true
-
-	local thread = task.spawn(function()
-		while isRunning do
-			-- Determine how many lights to twinkle (percentage of total)
-			local numToTwinkle = math.ceil(#self.wheelLights * (self.twinkleRate / 100))
-
-			-- Select random lights to twinkle
-			local lightIndices = {}
-			for i = 1, numToTwinkle do
-				local randomIndex
-				repeat
-					randomIndex = math.random(1, #self.wheelLights)
-				until not lightIndices[randomIndex]
-				lightIndices[randomIndex] = true
-			end
-
-			-- Twinkle the selected lights
-			for index, _ in pairs(lightIndices) do
-				local light = self.wheelLights[index]
-				-- Save original transparency
-				local originalTrans = light.Transparency
-
-				-- Highlight briefly
-				light.Transparency = 0
-				light.Color = Color3.fromRGB(255, 255, 255) -- Pure white flash
-
-				-- Restore after a short delay
-				task.spawn(function()
-					task.wait(0.1)
-					if isRunning then -- Check if effect is still running
-						light.Transparency = originalTrans
-						light.Color = self.idleColor
-					end
-				end)
-			end
-
-			-- Wait before next twinkle
-			task.wait(math.random(20, 40) / 100) -- 0.2 to 0.4 seconds
-		end
-	end)
-
-	-- Store cleanup function
-	local cleanup = function()
-		isRunning = false
-	end
-
-	table.insert(self.cleanupFunctions, cleanup)
-end
-
--- Start wheel spinning effects
-function WheelEffectsController:StartSpinningEffects(initialSpeed)
+-- NEW: Start wheel spinning effects WITH SYNC
+function WheelEffectsController:StartSpinningEffects(wheelSpinnerModule)
 	if not self.isInitialized then return end
 
 	self:StopAllEffects()
 	self.isSpinning = true
+	self.wheelSpinner = wheelSpinnerModule
 
 	-- Play spin start sound
 	local startSound = self.soundsFolder:FindFirstChild("SpinStartSound"):Clone()
@@ -316,7 +239,7 @@ function WheelEffectsController:StartSpinningEffects(initialSpeed)
 	--startSound:Play()
 	self.sounds.start = startSound
 
-	-- Set up looping spin sound (start after short delay)
+	-- Set up looping spin sound
 	task.spawn(function()
 		task.wait(0.7)
 		if self.isSpinning then
@@ -327,41 +250,42 @@ function WheelEffectsController:StartSpinningEffects(initialSpeed)
 		end
 	end)
 
-	-- Apply chase lighting effect based on speed
+	-- FIXED: Sync lighting to wheel rotation via Heartbeat
 	local isRunning = true
-	local chaseSpeed = 0.08 -- Starting speed
 
 	local thread = task.spawn(function()
-		local chaseIndex = 1
+		-- Connect to RunService to sync with wheel rotation
+		local connection = RunService.Heartbeat:Connect(function()
+			if not isRunning or not self.isSpinning then
+				return
+			end
 
-		while isRunning do
-			-- Reset all lights first
+			-- Get current winning segment from WheelSpinner
+			local currentSegment = self.wheelSpinner.GetCurrentWinningSegment 
+				and self.wheelSpinner.GetCurrentWinningSegment() 
+				or 1
+
+			-- Reset all lights to dim
 			for _, light in ipairs(self.wheelLights) do
-				light.Transparency = 0.6
+				light.Transparency = 0.7
 				light.Color = self.spinningColor
 			end
 
-			-- Calculate how many segments to light based on wheel speed
-			local speedFactor = math.min(1, initialSpeed / 2)
-			local numLights = math.max(1, math.floor(self.chaseSegments + (speedFactor * 5)))
-
-			-- Light up the active segment and next few segments
-			for i = 0, numLights - 1 do
-				local index = ((chaseIndex + i - 1) % #self.wheelLights) + 1
-				self.wheelLights[index].Transparency = 0
+			-- Light up the current segment's lights
+			local segmentLights = getLightForSegment(self, currentSegment)
+			for _, light in ipairs(segmentLights) do
+				light.Transparency = 0
+				light.Color = self.spinningColor
 			end
+		end)
 
-			-- Increment chase position
-			chaseIndex = (chaseIndex % #self.wheelLights) + 1
-
-			-- Adjust chase speed based on wheel speed (simulate slowing down)
-			chaseSpeed = math.max(0.02, chaseSpeed * 0.995)
-
-			task.wait(chaseSpeed)
-		end
+		-- Store cleanup that disconnects the connection
+		table.insert(self.cleanupFunctions, function()
+			connection:Disconnect()
+		end)
 	end)
 
-	-- Store cleanup function
+	-- Store main cleanup function
 	local cleanup = function()
 		isRunning = false
 
@@ -384,24 +308,18 @@ function WheelEffectsController:FinishSpin(winningIndex)
 
 	-- Stop spin loop sound if playing
 	if self.sounds.loop then
-		-- Check if sound exists and has needed methods
 		if typeof(self.sounds.loop) == "Instance" and self.sounds.loop:IsA("Sound") then
-			-- Check if it's playing before trying to stop it
 			if self.sounds.loop.IsPlaying then
-				-- Fade out loop sound
 				local fadeOut = TweenService:Create(
 					self.sounds.loop,
 					TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-					{
-						Volume = 0
-					}
+					{ Volume = 0 }
 				)
 				fadeOut:Play()
 			end
 
 			task.spawn(function()
 				task.wait(0.5)
-				-- Double-check sound still exists before stopping it
 				if self.sounds.loop and typeof(self.sounds.loop) == "Instance" and self.sounds.loop:IsA("Sound") then
 					pcall(function()
 						if self.sounds.loop.IsPlaying then
@@ -413,7 +331,6 @@ function WheelEffectsController:FinishSpin(winningIndex)
 				self.sounds.loop = nil
 			end)
 		else
-			-- Not a valid sound object, just clean up the reference
 			self.sounds.loop = nil
 		end
 	end
@@ -422,7 +339,7 @@ function WheelEffectsController:FinishSpin(winningIndex)
 	local endSound = self.soundsFolder:FindFirstChild("SpinEndSound"):Clone()
 	endSound.Parent = self.wheelCenter
 	endSound:Play()
-	self.sounds["endSound"] = endSound  -- Using string key to avoid keyword
+	self.sounds["endSound"] = endSound
 
 	task.spawn(function()
 		task.wait(3)
@@ -435,27 +352,14 @@ function WheelEffectsController:FinishSpin(winningIndex)
 	-- Stop all current effects
 	self:StopAllEffects()
 
-	-- Flash winning section a few times
+	-- Flash winning section
 	local isRunning = true
 	local flashCount = 0
 
 	local thread = task.spawn(function()
-		-- Determine which lights correspond to the winning segment
-		-- Since we don't have direct segment-to-light mapping, approximate using angle ranges
-		local segmentAngle = (2 * math.pi) / 16 -- Assuming 16 segments
-		local winningAngle = (winningIndex - 1) * segmentAngle
+		-- Get lights for winning segment
+		local winningLights = getLightForSegment(self, winningIndex)
 
-		-- Find lights in the winning segment angle range
-		local winningLights = {}
-		for _, light in ipairs(self.wheelLights) do
-			local angle = self.lightAngles[light]
-			local angleDiff = math.abs(angle - winningAngle)
-			if angleDiff <= segmentAngle / 2 or angleDiff >= (2 * math.pi - segmentAngle / 2) then
-				table.insert(winningLights, light)
-			end
-		end
-
-		-- If no winning lights found, flash all lights
 		if #winningLights == 0 then
 			winningLights = self.wheelLights
 		end
@@ -465,14 +369,11 @@ function WheelEffectsController:FinishSpin(winningIndex)
 		while flashCount < 10 and isRunning do
 			isOn = not isOn
 
-			-- Update all lights
 			for _, light in ipairs(self.wheelLights) do
 				if table.find(winningLights, light) then
-					-- Winning section lights
 					light.Transparency = isOn and 0 or 0.7
 					light.Color = self.winnerColor
 				else
-					-- Non-winning section lights
 					light.Transparency = 0.8
 					light.Color = self.idleColor
 				end
@@ -496,7 +397,6 @@ function WheelEffectsController:FinishSpin(winningIndex)
 		end
 	end)
 
-	-- Store cleanup function
 	local cleanup = function()
 		isRunning = false
 	end
@@ -506,30 +406,28 @@ function WheelEffectsController:FinishSpin(winningIndex)
 	return cleanup
 end
 
--- Integrate with WheelSpinner
+-- NEW: Integrate with WheelSpinner (FIXED VERSION)
 function WheelEffectsController:IntegrateWithSpinner(wheelSpinner)
-	-- Store original functions from wheel spinner
 	local originalSpinWheel = wheelSpinner.SpinWheel
 
 	-- Override SpinWheel to add effects
 	wheelSpinner.SpinWheel = function(...)
-		-- Add pre-spin effects
-		self:StartSpinningEffects(wheelSpinner.INITIAL_SPEED or 2)
+		-- FIXED: Pass wheelSpinner module reference for GetCurrentWinningSegment access
+		self:StartSpinningEffects(wheelSpinner)
 
 		-- Call original function
 		local result = originalSpinWheel(...)
 
 		-- Add post-spin effects
-		local winningSegmentIndex = wheelSpinner.GetCurrentWinningSegment and 
-			wheelSpinner.GetCurrentWinningSegment() or 1
+		local winningSegmentIndex = wheelSpinner.GetCurrentWinningSegment 
+			and wheelSpinner.GetCurrentWinningSegment() 
+			or 1
 		self:FinishSpin(winningSegmentIndex)
 
-		-- Return original result
 		return result
 	end
 
-	print("Integrated wheel effects with spinner")
+	print("Integrated wheel effects with spinner (SYNCED VERSION)")
 end
 
--- Return the controller
 return WheelEffectsController
