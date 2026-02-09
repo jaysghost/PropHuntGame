@@ -26,7 +26,7 @@ local Config = {
 
 	-- Animation timings
 	fadeTime = 0.3,              -- General fade in/out time
-	colorTweenTime = 0.5,        -- Time to tween between color schemes
+	colorTweenTime = 0.15,        -- Time to tween between color schemes
 	dotAnimationSpeed = 0.4,     -- Time between dot updates
 
 	-- PVH Animation Configuration
@@ -147,8 +147,7 @@ end
 
 -- Create the checker pattern
 local function CreateCheckerPattern()
-
-	-- Get the UI elements
+	-- Get the UI elements that already exist in the TransitionFrame
 	Elements.pvhImage = TransitionFrame:WaitForChild("pvh")
 	Elements.loadingText = TransitionFrame:WaitForChild("LoadingText")
 	Elements.digitOne = TransitionFrame:WaitForChild("DigitOne")
@@ -179,108 +178,101 @@ local function CreateCheckerPattern()
 	Elements.checkerboardContainer.ZIndex = 1
 	Elements.checkerboardContainer.Parent = TransitionFrame
 
-	-- Get screen size
-	local screenWidth = Elements.checkerboardContainer.AbsoluteSize.X
-	local screenHeight = Elements.checkerboardContainer.AbsoluteSize.Y
+	-- IMPORTANT: Replace these AssetIDs with your uploaded image IDs
+	-- Upload checkerboard_dark.png and checkerboard_light.png to Roblox
+	-- Then paste the AssetIDs here
+	local DARK_SQUARES_ASSET = "rbxassetid://88303973260711"
+	local LIGHT_SQUARES_ASSET = "rbxassetid://94902360211550"
 
-	-- Calculate exact number of full checkers that fit the screen
-	local checkersAcrossScreen = math.ceil(screenWidth / Config.checkSize)
-	-- Calculate total width needed for an exact number of checkers
-	local exactPanelWidth = checkersAcrossScreen * Config.checkSize
+	-- Create both panels for seamless scrolling
+	local panelWidth = 2  -- Double width for infinite scroll
 
-	-- Create both panels
+	-- PANEL A
 	Elements.panelA = Instance.new("Frame")
 	Elements.panelA.Name = "PanelA"
-	Elements.panelA.Size = UDim2.new(0, exactPanelWidth, 1, 0)
+	Elements.panelA.Size = UDim2.new(panelWidth, 0, 1, 0)
 	Elements.panelA.Position = UDim2.new(0, 0, 0, 0)
 	Elements.panelA.BackgroundTransparency = 1
 	Elements.panelA.BorderSizePixel = 0
 	Elements.panelA.ZIndex = 1
 	Elements.panelA.Parent = Elements.checkerboardContainer
 
+	-- PANEL B
 	Elements.panelB = Instance.new("Frame")
 	Elements.panelB.Name = "PanelB"
-	Elements.panelB.Size = UDim2.new(0, exactPanelWidth, 1, 0)
-	Elements.panelB.Position = UDim2.new(0, exactPanelWidth, 0, 0)
+	Elements.panelB.Size = UDim2.new(panelWidth, 0, 1, 0)
+	Elements.panelB.Position = UDim2.new(panelWidth, 0, 0, 0)
 	Elements.panelB.BackgroundTransparency = 1
 	Elements.panelB.BorderSizePixel = 0
 	Elements.panelB.ZIndex = 1
 	Elements.panelB.Parent = Elements.checkerboardContainer
 
-	-- Add attributes to track panel positions and width
+	-- Track panel positions for scrolling
 	Elements.panelA:SetAttribute("PosX", 0)
-	Elements.panelB:SetAttribute("PosX", exactPanelWidth)
-	Elements.panelA:SetAttribute("ExactWidth", exactPanelWidth)
+	Elements.panelB:SetAttribute("PosX", panelWidth)
 
-	-- Now create the checker patterns inside each panel
+	-- Create the tiled checker patterns for each panel
 	for panelIndex, panel in pairs({Elements.panelA, Elements.panelB}) do
-		-- Create the pattern container
-		local pattern = Instance.new("Frame")
-		pattern.Name = "CheckerPattern"
-		pattern.Size = UDim2.new(1, 0, 1, 0)
-		pattern.BackgroundTransparency = 1
-		pattern.BorderSizePixel = 0
-		pattern.Parent = panel
+		-- LIGHT SQUARES LAYER (bottom layer)
+		local lightLayer = Instance.new("ImageLabel")
+		lightLayer.Name = "LightSquares"
+		lightLayer.Size = UDim2.new(1, 0, 1, 0)
+		lightLayer.Position = UDim2.new(0, 0, 0, 0)
+		lightLayer.BackgroundTransparency = 1
+		lightLayer.BorderSizePixel = 0
+		lightLayer.ZIndex = 1
 
-		-- Create background fill
-		local backgroundFill = Instance.new("Frame")
-		backgroundFill.Name = "BackgroundFill"
-		backgroundFill.Size = UDim2.new(1, 0, 1, 0)
-		backgroundFill.Position = UDim2.new(0, 0, 0, 0)
-		backgroundFill.BorderSizePixel = 0
-		backgroundFill.BackgroundColor3 = Config.loadingLightColor
-		backgroundFill.BackgroundTransparency = 1 -- Start invisible
-		backgroundFill.ZIndex = 1
-		backgroundFill.Parent = pattern
+		-- Tiling configuration
+		lightLayer.Image = LIGHT_SQUARES_ASSET
+		lightLayer.ScaleType = Enum.ScaleType.Tile
+		lightLayer.TileSize = UDim2.new(0, 120, 0, 120)  -- Each square is 120px
 
-		-- Store reference to background fills
-		table.insert(Elements.backgroundFills, backgroundFill)
+		-- Initial color (loading theme)
+		lightLayer.ImageColor3 = Config.loadingLightColor
+		lightLayer.ImageTransparency = 1  -- Start invisible
 
-		-- Calculate how many full squares can fit
-		local cols = math.ceil(screenWidth / Config.checkSize) + 1
-		local rows = math.ceil(screenHeight / Config.checkSize) + 1
+		lightLayer.Parent = panel
 
-		-- Create checker squares
-		for row = 0, rows - 1 do
-			for col = 0, cols - 1 do
-				local isLight = (row + col) % 2 == 0
+		-- DARK SQUARES LAYER (top layer)
+		local darkLayer = Instance.new("ImageLabel")
+		darkLayer.Name = "DarkSquares"
+		darkLayer.Size = UDim2.new(1, 0, 1, 0)
+		darkLayer.Position = UDim2.new(0, 0, 0, 0)
+		darkLayer.BackgroundTransparency = 1
+		darkLayer.BorderSizePixel = 0
+		darkLayer.ZIndex = 2
 
-				-- Only create squares for the dark color (skip the light ones)
-				if not isLight then
-					local checker = Instance.new("Frame")
-					checker.Name = "Checker_" .. row .. "_" .. col
-					checker.Position = UDim2.new(0, col * Config.checkSize, 0, row * Config.checkSize)
-					checker.Size = UDim2.new(0, Config.checkSize, 0, Config.checkSize)
-					checker.BackgroundColor3 = Config.loadingDarkColor
-					checker.BackgroundTransparency = 1 -- Start invisible
-					checker.BorderSizePixel = 0
-					checker.ZIndex = 2
-					checker.Parent = pattern
+		-- Tiling configuration
+		darkLayer.Image = DARK_SQUARES_ASSET
+		darkLayer.ScaleType = Enum.ScaleType.Tile
+		darkLayer.TileSize = UDim2.new(0, 120, 0, 120)
 
-					-- Store reference to checker squares
-					table.insert(Elements.checkerSquares, checker)
-				end
-			end
-		end
+		-- Initial color (loading theme)
+		darkLayer.ImageColor3 = Config.loadingDarkColor
+		darkLayer.ImageTransparency = 1  -- Start invisible
+
+		darkLayer.Parent = panel
+
+		-- Store references for color tweening
+		table.insert(Elements.backgroundFills, lightLayer)
+		table.insert(Elements.checkerSquares, darkLayer)
 	end
 
 	-- Make transition frame invisible initially
 	TransitionFrame.BackgroundTransparency = 1
 	TransitionFrame.Visible = false
-
-	
 end
 
 -- SECTION: ANIMATION CONTROL FUNCTIONS
 
 -- Start scrolling the checkerboard
 local function StartScrollingCheckerboard()
-	
 	-- Disconnect any existing scroll connection
 	SafeDisconnect("scroll")
 
-	-- Get panel width
-	local exactPanelWidth = Elements.panelA:GetAttribute("ExactWidth")
+	-- Get the actual screen width for scrolling calculations
+	local screenWidth = Elements.checkerboardContainer.AbsoluteSize.X
+	local panelWidth = screenWidth * 2  -- Each panel is double width
 
 	-- Create new scroll connection
 	Connections.scroll = RunService.RenderStepped:Connect(function(deltaTime)
@@ -291,13 +283,13 @@ local function StartScrollingCheckerboard()
 		local posB = Elements.panelB:GetAttribute("PosX")
 		posB = posB - (Config.scrollSpeed * deltaTime)
 
-		-- Check boundaries
-		if posA <= -exactPanelWidth then
-			posA = posB + exactPanelWidth
+		-- Check boundaries for seamless looping
+		if posA <= -panelWidth then
+			posA = posB + panelWidth
 		end
 
-		if posB <= -exactPanelWidth then
-			posB = posA + exactPanelWidth
+		if posB <= -panelWidth then
+			posB = posA + panelWidth
 		end
 
 		-- Apply positions
@@ -312,7 +304,7 @@ end
 
 -- Stop scrolling the checkerboard
 local function StopScrollingCheckerboard()
-	
+
 	SafeDisconnect("scroll")
 end
 
@@ -396,7 +388,7 @@ end
 
 -- Start countdown timer
 local function StartCountdownTimer(duration)
-	
+
 	-- Disconnect any existing timer
 	SafeDisconnect("countdownTimer")
 
@@ -434,7 +426,7 @@ end
 
 -- Stop countdown timer
 local function StopCountdownTimer()
-	
+
 	SafeDisconnect("countdownTimer")
 end
 
@@ -442,18 +434,16 @@ end
 
 -- Show all UI elements
 local function FadeInAllElements(mode)
-
-
-	-- Fade in checkerboard elements
-	for _, backgroundFill in ipairs(Elements.backgroundFills) do
-		TweenMethods.CreateTweenAsync(backgroundFill, TweenMethods.ReturnSineData(Config.fadeTime), {
-			BackgroundTransparency = 0
+	-- Fade in checkerboard elements (now ImageLabels)
+	for _, lightLayer in ipairs(Elements.backgroundFills) do
+		TweenMethods.CreateTweenAsync(lightLayer, TweenMethods.ReturnSineData(Config.fadeTime), {
+			ImageTransparency = 0  -- Changed from BackgroundTransparency
 		})
 	end
 
-	for _, checker in ipairs(Elements.checkerSquares) do
-		TweenMethods.CreateTweenAsync(checker, TweenMethods.ReturnSineData(Config.fadeTime), {
-			BackgroundTransparency = 0
+	for _, darkLayer in ipairs(Elements.checkerSquares) do
+		TweenMethods.CreateTweenAsync(darkLayer, TweenMethods.ReturnSineData(Config.fadeTime), {
+			ImageTransparency = 0  -- Changed from BackgroundTransparency
 		})
 	end
 
@@ -490,18 +480,16 @@ end
 
 -- Hide all UI elements
 local function FadeOutAllElements()
-
-
-	-- Fade out checkerboard elements
-	for _, backgroundFill in ipairs(Elements.backgroundFills) do
-		TweenMethods.CreateTweenAsync(backgroundFill, TweenMethods.ReturnSineData(Config.fadeTime), {
-			BackgroundTransparency = 1
+	-- Fade out checkerboard elements (now ImageLabels)
+	for _, lightLayer in ipairs(Elements.backgroundFills) do
+		TweenMethods.CreateTweenAsync(lightLayer, TweenMethods.ReturnSineData(Config.fadeTime), {
+			ImageTransparency = 1  -- Changed from BackgroundTransparency
 		})
 	end
 
-	for _, checker in ipairs(Elements.checkerSquares) do
-		TweenMethods.CreateTweenAsync(checker, TweenMethods.ReturnSineData(Config.fadeTime), {
-			BackgroundTransparency = 1
+	for _, darkLayer in ipairs(Elements.checkerSquares) do
+		TweenMethods.CreateTweenAsync(darkLayer, TweenMethods.ReturnSineData(Config.fadeTime), {
+			ImageTransparency = 1  -- Changed from BackgroundTransparency
 		})
 	end
 
@@ -527,23 +515,21 @@ end
 
 -- Update colors based on mode
 local function TweenColorsForMode(mode)
-
-
 	-- Determine target colors
 	local lightColor = mode == "hunterWaiting" and Config.hunterLightColor or Config.loadingLightColor
 	local darkColor = mode == "hunterWaiting" and Config.hunterDarkColor or Config.loadingDarkColor
 
-	-- Tween background fills
-	for _, backgroundFill in ipairs(Elements.backgroundFills) do
-		TweenMethods.CreateTweenAsync(backgroundFill, TweenMethods.ReturnSineData(Config.colorTweenTime), {
-			BackgroundColor3 = lightColor
+	-- Tween light squares (backgroundFills contains light layers)
+	for _, lightLayer in ipairs(Elements.backgroundFills) do
+		TweenMethods.CreateTweenAsync(lightLayer, TweenMethods.ReturnSineData(Config.colorTweenTime), {
+			ImageColor3 = lightColor
 		})
 	end
 
-	-- Tween checker squares
-	for _, checker in ipairs(Elements.checkerSquares) do
-		TweenMethods.CreateTweenAsync(checker, TweenMethods.ReturnSineData(Config.colorTweenTime), {
-			BackgroundColor3 = darkColor
+	-- Tween dark squares (checkerSquares contains dark layers)
+	for _, darkLayer in ipairs(Elements.checkerSquares) do
+		TweenMethods.CreateTweenAsync(darkLayer, TweenMethods.ReturnSineData(Config.colorTweenTime), {
+			ImageColor3 = darkColor
 		})
 	end
 end
@@ -641,10 +627,10 @@ RemoteEvent.OnClientEvent:Connect(function(eventName, ...)
 		ShowTransitionScreen("loading")
 	elseif eventName == "GracePeriodStarted" then
 		local gracePeriodTime = ...
-	
+
 
 		if LocalPlayer:GetAttribute("Role") == "Hunter" then
-		
+
 			ShowTransitionScreen("hunterWaiting", gracePeriodTime)
 		else
 			HideTransitionScreen()
