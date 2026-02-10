@@ -567,15 +567,16 @@ if LocalPlayer.Character then
 	setupCharacter(LocalPlayer.Character)
 end
 
--- PropUIController - Manages the Prop UI integration with existing functionality
--- Get UI references
-local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-local clientUI = PlayerGui:WaitForChild("Client") 
-local HUD = clientUI:WaitForChild("HUD")
-local propUIHolder = HUD:WaitForChild("PropUIHolder")
+-- ============================================================================
+-- PROP UI CONTROLLER - Deferred Initialization System
+-- ============================================================================
 
--- Hide UI initially
-propUIHolder.Visible = false
+-- Declare PropUI variables at module scope
+local propUIHolder
+local leftButton
+local rightButton
+local lockButton
+local propUIInitialized = false
 
 -- Lock button images
 local LOCK_OPEN_IMAGE = "rbxassetid://125553596095193"
@@ -585,66 +586,41 @@ local LOCK_CLOSED_IMAGE = "rbxassetid://101126695739586"
 local ROTATION_SOUND_ID = "rbxassetid://110425630984487"
 local LOCK_SOUND_ID = "rbxassetid://133653146417279"
 
--- Get ImageLabel references
-local leftButton = propUIHolder:WaitForChild("Left")
-local rightButton = propUIHolder:WaitForChild("Right")
-local lockButton = propUIHolder:WaitForChild("Lock")
-
--- Initialize lock button image
-lockButton.Image = LOCK_OPEN_IMAGE
-
 -- Sound debounce system
 local soundDebounce = {
 	rotation = false,
 	lock = false
 }
-local SOUND_DEBOUNCE_TIME = 0.1 -- 100ms debounce
+local SOUND_DEBOUNCE_TIME = 0.1
 local animatingButtons = {}
 
 -- Function to play sound effects with debounce
 local function playPropSound(soundType)
-	-- Check debounce
-	if soundDebounce[soundType] then
-		return
-	end
+	if soundDebounce[soundType] then return end
 
-	-- Set debounce
 	soundDebounce[soundType] = true
 
-	-- Create and play sound
 	local sound = Instance.new("Sound")
 	sound.SoundId = soundType == "rotation" and ROTATION_SOUND_ID or LOCK_SOUND_ID
 	sound.Volume = 0.5
 	sound.Parent = workspace
 
 	sound:Play()
-
-	-- Clean up when sound ends
 	sound.Ended:Connect(function()
 		sound:Destroy()
 	end)
 
-	-- Reset debounce after a short delay
 	task.delay(SOUND_DEBOUNCE_TIME, function()
 		soundDebounce[soundType] = false
 	end)
 end
 
+-- Function to animate button presses
 local function animateButtonPress(button)
-	if not button then return end
+	if not button or animatingButtons[button] then return end
 
-	-- Check if button is already being animated
-	if animatingButtons[button] then
-		return
-	end
-
-	-- Mark button as animating
 	animatingButtons[button] = true
-
-	-- Store original size
 	local originalSize = button.Size
-
-	-- Scale up to 1.2x
 	local expandedSize = UDim2.new(
 		originalSize.X.Scale * 1.2,
 		originalSize.X.Offset * 1.2,
@@ -652,7 +628,6 @@ local function animateButtonPress(button)
 		originalSize.Y.Offset * 1.2
 	)
 
-	-- Create press animation
 	local expandTween = TweenService:Create(
 		button,
 		TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
@@ -660,7 +635,6 @@ local function animateButtonPress(button)
 	)
 	expandTween:Play()
 
-	-- Return to original size after short delay
 	task.delay(0.15, function()
 		if button and button.Parent then
 			local contractTween = TweenService:Create(
@@ -669,75 +643,42 @@ local function animateButtonPress(button)
 				{Size = originalSize}
 			)
 			contractTween:Play()
-
-			-- Clear animation state when done
 			contractTween.Completed:Connect(function()
 				animatingButtons[button] = nil
 			end)
 		else
-			-- Clean up if button was destroyed
 			animatingButtons[button] = nil
 		end
 	end)
 end
 
-local originalRotateProp = rotateProp
+-- Function to update UI visibility based on role and state
+local function updatePropUIVisibility()
+	if not propUIInitialized or not propUIHolder then return end
 
--- Override rotateProp to play sound and animate
-rotateProp = function(character, direction)
-	-- Exit early if conditions aren't met
-	if not isInPropState() or isRotating then 
-		return originalRotateProp(character, direction)
+	local character = LocalPlayer.Character
+	local humanoid = character and character:FindFirstChild("Humanoid")
+
+	if humanoid and humanoid.Health <= 0 then
+		propUIHolder.Visible = false
+		return
 	end
 
-	-- Only play sound and animate for local player's character
-	if character == LocalPlayer.Character then
-		-- Play rotation sound
-		playPropSound("rotation")
+	local shouldBeVisible = (currentRole == "Prop" and isInPropState())
+	propUIHolder.Visible = shouldBeVisible
 
-		-- Animate the appropriate button if UI is visible
-		if propUIHolder.Visible then
-			local buttonToAnimate = direction < 0 and leftButton or rightButton
-			animateButtonPress(buttonToAnimate)
-		end
-	end
-
-	-- Call original function to perform rotation
-	return originalRotateProp(character, direction)
-end
-
--- Store original toggleFreeze function
-local originalToggleFreeze = toggleFreeze
-
--- Override toggleFreeze to update UI and play sound
-toggleFreeze = function()
-	local wasFrozen = isFrozen
-
-	-- Call original function
-	originalToggleFreeze()
-
-	-- Only continue if state actually changed
-	if wasFrozen ~= isFrozen then
-		-- Play lock sound
-		playPropSound("lock")
-
-		-- Animate button and update image if UI is visible
-		if propUIHolder.Visible then
-			lockButton.Image = isFrozen and LOCK_CLOSED_IMAGE or LOCK_OPEN_IMAGE
-			animateButtonPress(lockButton)
-		end
+	if shouldBeVisible and lockButton then
+		lockButton.Image = isFrozen and LOCK_CLOSED_IMAGE or LOCK_OPEN_IMAGE
 	end
 end
 
--- Function to create a clickdetector for an ImageLabel
+-- Function to create click detectors for ImageLabels
 local function createClickDetector(imageLabel, callback)
-	-- Remove any existing detector
 	local existingDetector = imageLabel:FindFirstChild("ClickDetector")
 	if existingDetector then
 		existingDetector:Destroy()
 	end
 
-	-- Create transparent button for click detection
 	local button = Instance.new("TextButton")
 	button.Name = "ClickDetector"
 	button.Size = UDim2.fromScale(1, 1)
@@ -747,52 +688,121 @@ local function createClickDetector(imageLabel, callback)
 	button.ZIndex = 10
 	button.Parent = imageLabel
 
-	-- Connect the click event
 	button.MouseButton1Click:Connect(callback)
-
 	return button
 end
 
-createClickDetector(leftButton, function()
-	if currentRole == "Prop" and isInPropState() then
-		-- Don't play sound here - rotateProp will do it
-		animateButtonPress(leftButton)
-		RemoteEvent:FireServer("PropRotationEvent", -1)
+-- Override rotateProp to add sound and animation
+local originalRotateProp = rotateProp
+rotateProp = function(character, direction)
+	if not isInPropState() or isRotating then 
+		return originalRotateProp(character, direction)
 	end
-end)
 
-createClickDetector(rightButton, function()
-	if currentRole == "Prop" and isInPropState() then
-		-- Don't play sound here - rotateProp will do it
-		animateButtonPress(rightButton)
-		RemoteEvent:FireServer("PropRotationEvent", 1)
+	if character == LocalPlayer.Character then
+		playPropSound("rotation")
+
+		if propUIInitialized and propUIHolder.Visible then
+			local buttonToAnimate = direction < 0 and leftButton or rightButton
+			animateButtonPress(buttonToAnimate)
+		end
 	end
-end)
 
-createClickDetector(lockButton, function()
-	if currentRole == "Prop" and isInPropState() then
-		toggleFreeze()
-	end
-end)
+	return originalRotateProp(character, direction)
+end
 
--- Function to update UI visibility based on role and state
-local function updatePropUIVisibility()
-	local shouldBeVisible = (currentRole == "Prop" and isInPropState())
-	propUIHolder.Visible = shouldBeVisible
+-- Override toggleFreeze to add sound and animation
+local originalToggleFreeze = toggleFreeze
+toggleFreeze = function()
+	local wasFrozen = isFrozen
+	originalToggleFreeze()
 
-	-- If becoming visible, make sure lock image is in correct state
-	if shouldBeVisible then
-		lockButton.Image = isFrozen and LOCK_CLOSED_IMAGE or LOCK_OPEN_IMAGE
+	if wasFrozen ~= isFrozen then
+		playPropSound("lock")
+
+		if propUIInitialized and propUIHolder.Visible and lockButton then
+			lockButton.Image = isFrozen and LOCK_CLOSED_IMAGE or LOCK_OPEN_IMAGE
+			animateButtonPress(lockButton)
+		end
 	end
 end
 
--- Add additional InputBegan connection for PropUI animations (not sounds)
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-	if gameProcessed then return end
+-- Main PropUI initialization function
+local function initializePropUI()
+	if propUIInitialized then
+		return true
+	end
 
+	print("[PropUI] Starting initialization...")
+
+	local PlayerGui = LocalPlayer:WaitForChild("PlayerGui", 10)
+	if not PlayerGui then
+		warn("[PropUI] PlayerGui failed to load!")
+		return false
+	end
+
+	local clientUI = PlayerGui:WaitForChild("Client", 10)
+	if not clientUI then
+		warn("[PropUI] Client UI failed to load!")
+		return false
+	end
+
+	local HUD = clientUI:WaitForChild("HUD", 10)
+	if not HUD then
+		warn("[PropUI] HUD failed to load!")
+		return false
+	end
+
+	propUIHolder = HUD:WaitForChild("PropUIHolder", 30)
+	if not propUIHolder then
+		warn("[PropUI] PropUIHolder failed to load!")
+		return false
+	end
+
+	leftButton = propUIHolder:WaitForChild("Left", 5)
+	rightButton = propUIHolder:WaitForChild("Right", 5)
+	lockButton = propUIHolder:WaitForChild("Lock", 5)
+
+	if not leftButton or not rightButton or not lockButton then
+		warn("[PropUI] Failed to find UI buttons!")
+		return false
+	end
+
+	-- Hide UI initially
+	propUIHolder.Visible = false
+	lockButton.Image = LOCK_OPEN_IMAGE
+
+	-- Set up click detectors
+	createClickDetector(leftButton, function()
+		if currentRole == "Prop" and isInPropState() then
+			animateButtonPress(leftButton)
+			RemoteEvent:FireServer("PropRotationEvent", -1)
+		end
+	end)
+
+	createClickDetector(rightButton, function()
+		if currentRole == "Prop" and isInPropState() then
+			animateButtonPress(rightButton)
+			RemoteEvent:FireServer("PropRotationEvent", 1)
+		end
+	end)
+
+	createClickDetector(lockButton, function()
+		if currentRole == "Prop" and isInPropState() then
+			toggleFreeze()
+		end
+	end)
+
+	propUIInitialized = true
+	print("[PropUI] Successfully initialized!")
+	return true
+end
+
+-- Additional input handler for keyboard button animations
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed or not propUIInitialized then return end
 	if not (isInPropState() and currentRole == "Prop") then return end
 
-	-- Just animate buttons on keypress, sounds will be played by the actions
 	if input.KeyCode == Enum.KeyCode.Q then
 		animateButtonPress(leftButton)
 	elseif input.KeyCode == Enum.KeyCode.E then
@@ -802,7 +812,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	end
 end)
 
--- Connect to RemoteEvent without disrupting existing connections
+-- PropUI-specific RemoteEvent handler
 RemoteEvent.OnClientEvent:Connect(function(eventName, ...)
 	if eventName == "RoleAssigned" then
 		task.delay(0.1, updatePropUIVisibility)
@@ -812,54 +822,44 @@ RemoteEvent.OnClientEvent:Connect(function(eventName, ...)
 			task.delay(0.1, updatePropUIVisibility)
 		end
 	elseif eventName == "RoundEnding" or eventName == "WaitingForPlayers" or eventName == "ShowDeathScreen" then
-		
-		propUIHolder.Visible = false
+		if propUIInitialized and propUIHolder then
+			propUIHolder.Visible = false
+		end
 	elseif eventName == "PlayerRoleChanged" then
 		local playerName, newRole = ...
-
-		-- If it's the local player
-		if playerName == Players.LocalPlayer.Name then
-			-- Update current role
+		if playerName == LocalPlayer.Name then
 			currentRole = newRole
-
-			-- Update UI visibility based on new role
-			if newRole == "Hunter" then
-				-- Hide prop UI
+			if newRole == "Hunter" and propUIInitialized and propUIHolder then
 				propUIHolder.Visible = false
 
-				-- Play transition sound
 				local transitionSound = Instance.new("Sound")
-				transitionSound.SoundId = "rbxassetid://9119720505" -- Replace with appropriate sound ID
+				transitionSound.SoundId = "rbxassetid://9119720505"
 				transitionSound.Volume = 1
 				transitionSound.Parent = LocalPlayer.PlayerGui
 				transitionSound:Play()
 
-				-- Create transition effect
 				local screenGui = Instance.new("ScreenGui")
 				screenGui.Name = "TransitionEffect"
 				screenGui.Parent = LocalPlayer.PlayerGui
 
 				local flash = Instance.new("Frame")
 				flash.Size = UDim2.fromScale(1, 1)
-				flash.BackgroundColor3 = Color3.new(1, 0, 0) -- Red flash
+				flash.BackgroundColor3 = Color3.new(1, 0, 0)
 				flash.BackgroundTransparency = 0.7
 				flash.Parent = screenGui
 
-				-- Fade out the effect
-				game:GetService("TweenService"):Create(
+				TweenService:Create(
 					flash,
 					TweenInfo.new(1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 					{BackgroundTransparency = 1}
 				):Play()
 
-				-- Show notification
 				game:GetService("StarterGui"):SetCore("SendNotification", {
 					Title = "Role Changed",
 					Text = "You are now a Hunter!",
 					Duration = 5
 				})
 
-				-- Clean up
 				task.delay(1, function()
 					screenGui:Destroy()
 				end)
@@ -868,17 +868,52 @@ RemoteEvent.OnClientEvent:Connect(function(eventName, ...)
 	end
 end)
 
--- Check for character changes to update UI
+-- Character-specific PropUI updates
 LocalPlayer.CharacterAdded:Connect(function(character)
 	task.delay(0.5, updatePropUIVisibility)
 
 	local humanoid = character:WaitForChild("Humanoid")
 	humanoid.Died:Connect(function()
-		propUIHolder.Visible = false
+		if propUIInitialized and propUIHolder then
+			propUIHolder.Visible = false
+		end
 	end)
 end)
 
--- Initial visibility check
-updatePropUIVisibility()
+-- ============================================================================
+-- DEFERRED PROP UI INITIALIZATION WITH RETRY LOGIC
+-- ============================================================================
+task.spawn(function()
+	local MAX_RETRIES = 3
+	local RETRY_DELAYS = {0.5, 2, 5}  -- Increasing delays: 0.5s, 2s, 5s
+	local attempt = 0
+	local success = false
 
-print("PropUIController initialized successfully")
+	while attempt < MAX_RETRIES and not success do
+		attempt = attempt + 1
+
+		-- Wait before this attempt
+		local delay = RETRY_DELAYS[attempt] or 5
+		task.wait(delay)
+
+		print(string.format("[PropUI] Initialization attempt %d/%d", attempt, MAX_RETRIES))
+
+		-- Try to initialize
+		success = initializePropUI()
+
+		if success then
+			print("[PropUI] Successfully initialized on attempt " .. attempt)
+			updatePropUIVisibility()
+			break
+		else
+			if attempt < MAX_RETRIES then
+				warn(string.format("[PropUI] Attempt %d failed, retrying in %d seconds...", attempt, RETRY_DELAYS[attempt + 1] or 5))
+			else
+				warn("[PropUI] All initialization attempts failed - PropUI will be disabled for this player")
+				warn("[PropUI] Game is still playable, but PropUI buttons (Q/E/R) won't be visible")
+			end
+		end
+	end
+end)
+
+print("[ClientEventHandler] Script loaded successfully")

@@ -337,15 +337,17 @@ local function ExecutePingEffect()
 	end)
 end
 
--- Update your CleanupPingEffects function to include ripple cleanup
 local function CleanupPingEffects()
-	-- Cancel ripple thread
+	print("[VotingHandler] Cleaning up ping effects")
+
+	-- Cancel ripple thread FIRST
 	if rippleThread then
 		task.cancel(rippleThread)
 		rippleThread = nil
+		print("[VotingHandler] Cancelled ripple thread")
 	end
 
-	-- Remove ripple elements
+	-- Remove ALL ripple elements
 	for _, ripple in pairs(rippleElements) do
 		if ripple and ripple.Parent then
 			ripple:Destroy()
@@ -355,21 +357,25 @@ local function CleanupPingEffects()
 
 	-- Get reference to ping notification
 	local pingNotif = findPingNotif()
-	if not pingNotif then return end
+	if not pingNotif then 
+		print("[VotingHandler] No ping notif found during cleanup")
+		return 
+	end
 
-	-- Fade out with tween
-	local fadeOutTween = TweenService:Create(
-		pingNotif,
-		TweenInfo.new(0.5, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
-		{ImageTransparency = 1}
-	)
+	-- IMMEDIATELY hide and make transparent (no fade animation)
+	pingNotif.Visible = false
+	pingNotif.ImageTransparency = 1
 
-	fadeOutTween:Play()
+	-- Reset size and position to original
+	if pingOriginalSize then
+		pingNotif.Size = pingOriginalSize
+	end
 
-	-- Hide after animation completes
-	fadeOutTween.Completed:Connect(function()
-		pingNotif.Visible = false
-	end)
+	if pingOriginalPosition then
+		pingNotif.Position = pingOriginalPosition
+	end
+
+	print("[VotingHandler] Ping notification fully cleaned up")
 end
 
 -- Function to initialize prop counter label

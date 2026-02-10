@@ -169,6 +169,7 @@ function ViewportMethods.InitPlayerBillboards()
 end
 
 -- Update the CreatePlayerBillboard function with final adjustments
+-- Update the CreatePlayerBillboard function with final adjustments
 function ViewportMethods.CreatePlayerBillboard(player)
 	local character = player.Character
 	if not character then return end
@@ -354,6 +355,25 @@ function ViewportMethods.CreatePlayerBillboard(player)
 			fadeOutBillboard()
 			return
 		end
+
+		-- ============================================
+		-- ROLE-BASED VISIBILITY FILTERING
+		-- ============================================
+		local localRole = Player:GetAttribute("Role")
+		local targetRole = player:GetAttribute("Role")
+		
+		if localRole ~= "Prop" or targetRole ~= "Prop" then
+			fadeOutBillboard()
+			return
+		end
+
+		-- Optional: Hunters should NOT see other Hunter overheads (reduces distraction)
+		-- Uncomment the following lines if you want this behavior:
+		-- if localRole == "Hunter" and targetRole == "Hunter" then
+		-- 	fadeOutBillboard()
+		-- 	return
+		-- end
+		-- ============================================
 
 		local localHumanoidRootPart = localCharacter:FindFirstChild("HumanoidRootPart")
 		if not localHumanoidRootPart or not humanoidRootPart or not humanoidRootPart.Parent then

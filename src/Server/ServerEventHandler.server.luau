@@ -184,6 +184,18 @@ serverEvent.Event:Connect(function(eventName, data)
 
 		-- Play death sound
 		PlayDeathSound(killer, victim)
+		
+		if victim:GetAttribute("Role") == "Prop" and killer:GetAttribute("Role") == "Hunter" then
+			if DEBUG_MODE then
+				debugLog("🎯 Prop eliminated by hunter - firing Prop_Eliminated event")
+			end
+
+			-- Fire event to GameManager
+			serverEvent:Fire("Prop_Eliminated", {
+				hunter = killer,
+				prop = victim
+			})
+		end
 
 		-- Handle legacy elimination events (for backward compatibility)
 		-- These should eventually be removed once everything uses the new system

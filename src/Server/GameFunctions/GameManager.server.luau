@@ -3,10 +3,14 @@
 -- VotingSystem with Round Timer Addition
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
 local Players = game:GetService("Players")
 
 -- Get the existing RemoteEvent
 local RemoteEvent = ReplicatedStorage:WaitForChild("RemoteEvent")
+
+-- Get the existing BindableEvent
+local BindableEvent = ServerScriptService:WaitForChild("Event")
 
 -- Use the existing MapRepository
 local MapRepository = require(script.Parent.Parent.Misc.MapRepository)
@@ -24,7 +28,7 @@ WheelEffectsController:IntegrateWithSpinner(WheelSpinner)
 
 -- Configuration
 local INTERMISSION_TIME = 10 -- Seconds for voting period
-local MIN_PLAYERS_TO_START =  2 -- Minimum players needed
+local MIN_PLAYERS_TO_START =  1 -- Minimum players needed
 local ROUND_TIME = 60 -- Seconds for round time (1 minute)
 local GRACE_PERIOD_TIME = 10 -- Seconds for grace period
 local TRANSITION_DELAY = 0.5 -- Delay after UI closes before respawning
@@ -369,83 +373,108 @@ local function HandlePendingTransitions()
 end
 
 function EndRound(hunterWon)
-	-- Set the ending flag immediately to prevent new transitions
-	GameState.isEnding = true
+	print("=== ENDING ROUND ===")
 
-	-- Show transition screen FIRST before any other changes
+	-- CRITICAL: Stop timer loop IMMEDIATELY by changing state and forcing timer to 0
+	GameState.currentState = "EndingRound"  -- This stops the timer loop
+	GameState.roundTime = 0  -- Force timer to 0
+	GameState.timerActive = false  -- Redundant flag
+	GameState.isEnding = true  -- Set ending flag
+
+	-- 1. Show transition screen FIRST
+	print("Showing transition screen to all players")
 	RemoteEvent:FireAllClients("RoundEnding")
+	task.wait(1)  -- Give transition screen time to appear
 
-	-- Add delay to ensure transition screen has time to appear
-	task.wait(1)
-
-	-- Determine who won and announce it after screen appears
+	-- 2. Announce winner
 	if hunterWon ~= nil then
 		local winMessage = hunterWon and "Hunter wins!" or "Props win!"
 		print(winMessage)
 		RemoteEvent:FireAllClients("RoundEndAnnouncement", winMessage)
 	end
 
-	-- Handle any players who were in the middle of transitioning
-	HandlePendingTransitions()
-
-	-- Reset all players (respawn them to lobby)
-	for _, player in ipairs(Players:GetPlayers()) do
-		-- Clear any transition flags
-		if player:GetAttribute("TransitionToHunter") then
-			player:SetAttribute("TransitionToHunter", false)
-		end
-
-		-- Reset ManualRespawn flag to allow LoadCharacter to work
-		if player:GetAttribute("ManualRespawn") then
-			player:SetAttribute("ManualRespawn", false)
-		end
-
-		-- Use LoadCharacter to reset the player
-		player:LoadCharacter()
-
-		-- Make sure they're in the default waiting state
-		RemoteEvent:FireClient(player, "DisableFirstPerson")
-	end
-
-	-- Give time for respawns to complete
-	task.wait(0.5)
-
-	-- Clean up any existing map AFTER players have respawned
+	-- 3. Destroy ActiveMap BEFORE respawning (prevents falling into void)
+	print("Destroying ActiveMap")
 	local existingMap = workspace:FindFirstChild("ActiveMap")
 	if existingMap then
 		existingMap:Destroy()
 	end
 
-	-- Reset roles
+	-- Wait LONGER to ensure map is fully destroyed
+	task.wait(1)  -- Increased buffer
+
+	-- 4. Handle any players with pending transitions
+	print("Handling pending transitions")
+	for playerId, data in pairs(GameState.pendingTransitions) do
+		local player = Players:GetPlayerByUserId(playerId)
+		if player then
+			player:SetAttribute("TransitionToHunter", false)
+			player:SetAttribute("ManualRespawn", false)
+			GameState.pendingTransitions[playerId] = nil
+		end
+	end
+
+	-- 5. Clear all player attributes and respawn everyone
+	print("Clearing attributes and respawning all players")
+	for _, player in ipairs(Players:GetPlayers()) do
+		-- Clear all game-related attributes
+		player:SetAttribute("TransitionToHunter", false)
+		player:SetAttribute("ManualRespawn", false)
+		player:SetAttribute("Role", nil)
+		player:SetAttribute("PendingHunterTransition", false)
+
+		-- LoadCharacter will spawn at the lobby SpawnLocation
+		player:LoadCharacter()
+	end
+
+	-- 6. Wait LONGER for all characters to spawn (LoadCharacter is async)
+	print("Waiting for characters to spawn...")
+	task.wait(4)  -- Increased from 2 to 4 seconds
+
+	-- 7. Reset camera states for all players AFTER they've spawned
+	print("Resetting camera states")
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player.Character then
+			RemoteEvent:FireClient(player, "DisableFirstPerson")
+		end
+	end
+
+	-- 8. Clean up game state
+	print("Cleaning up game state")
 	PlayerRoles = {}
 	GameState.selectedHunter = nil
+	GameState.pendingTransitions = {}
 
-	-- Change state to a transitional state first to prevent GameLoop from interfering
-	GameState.currentState = "EndingRound"
+	-- CRITICAL: Reset PropPingSystem to prevent lobby pings
+	PropPingSystem.nextPingTime = nil
+	PropPingSystem.notificationSent = false
+	PropPingSystem.lastPingTime = 0
 
-	-- Reset any active timers
-	GameState.timerActive = false
+	-- Stop lobby effects if running
+	LobbyEffectsController:StopAllEffects()
 
-	-- Keep transition screen showing a bit longer to ensure smooth experience
+	-- 9. Wait a bit more, then hide transition screen
+	print("Hiding transition screen")
 	task.wait(1)
-
-	-- Tell clients to hide the transition screen now that players are in lobby
 	RemoteEvent:FireAllClients("ReturnedToLobby")
 
-	-- Check if we have enough players to start a new round
+	-- 10. Check if we have enough players to start a new round
+	print("Checking player count for next round")
 	if #Players:GetPlayers() >= MIN_PLAYERS_TO_START then
 		-- Start a new intermission after a short delay
-		wait(3)
+		task.wait(3)
+		GameState.currentState = "Waiting"  -- Reset to waiting so GameLoop can pick it up
 		StartIntermission()
 	else
-		print("Waiting for more players to join...")
-		-- Only now change to "Waiting" if we're not starting a new round
+		print("Not enough players to start new round - waiting for more players...")
 		GameState.currentState = "Waiting"
 		RemoteEvent:FireAllClients("WaitingForPlayers")
 	end
 
 	-- Reset the ending flag
 	GameState.isEnding = false
+
+	print("=== ROUND ENDED SUCCESSFULLY ===")
 end
 
 
@@ -1039,6 +1068,11 @@ local function HandlePropElimination(hunter, prop)
 
 	-- If no props remain, hunter wins
 	if propsRemaining <= 0 then
+		print("Last prop eliminated! Starting 3-second delay before ending round...")
+
+		-- Wait 3 seconds to let death screen/spectate play
+		task.wait(3)
+
 		-- End the round with Hunter win condition
 		local hunterWon = true
 		EndRound(hunterWon)
@@ -1239,6 +1273,22 @@ Players.PlayerRemoving:Connect(function(player)
 	end
 end)
 
+BindableEvent.Event:Connect(function(eventName, data)
+	if eventName == "Player_Eliminated" then
+		local victim = data.victim
+		local killer = data.killer
+
+		-- Only handle if victim is a Prop and killer is a Hunter
+		if victim and killer and 
+			victim:GetAttribute("Role") == "Prop" and 
+			killer:GetAttribute("Role") == "Hunter" then
+
+			print("🎯 GameManager: Prop eliminated by hunter - calling HandlePropElimination")
+			HandlePropElimination(killer, victim)
+		end
+	end
+end)
+
 function GameLoop()
 	-- Monitor for changes to "Waiting" state
 	task.spawn(function()
@@ -1255,6 +1305,9 @@ function GameLoop()
 	while true do
 		-- Check if we have enough players to start
 		if GameState.currentState == "Waiting" and #Players:GetPlayers() >= MIN_PLAYERS_TO_START then
+			-- IMMEDIATELY change state to prevent double-start
+			GameState.currentState = "PreIntermission"  -- NEW: Transitional state
+
 			wait(3)
 			StartIntermission()
 		end
@@ -1277,6 +1330,7 @@ Initialize()
 return {
 	StartIntermission = StartIntermission,
 	HandleVote = HandleVote,
+	HandlePropElimination = HandlePropElimination,
 	GameState = GameState,
 	PlayerRoles = PlayerRoles,
 	EndRound = EndRound

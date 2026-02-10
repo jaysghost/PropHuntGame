@@ -304,8 +304,24 @@ end
 
 -- Stop scrolling the checkerboard
 local function StopScrollingCheckerboard()
-
 	SafeDisconnect("scroll")
+
+	-- Reset panel positions to starting locations
+	if Elements.panelA and Elements.panelB and Elements.checkerboardContainer then
+		-- Get screen width for calculations
+		local screenWidth = Elements.checkerboardContainer.AbsoluteSize.X
+		local panelWidth = screenWidth * 2
+
+		-- Reset to starting positions
+		Elements.panelA.Position = UDim2.new(0, 0, 0, 0)
+		Elements.panelB.Position = UDim2.new(0, panelWidth, 0, 0)  -- Start off-screen to the right
+
+		-- Reset position attributes
+		Elements.panelA:SetAttribute("PosX", 0)
+		Elements.panelB:SetAttribute("PosX", panelWidth)
+
+		print("[TransitionScreen] Checkerboard positions reset")
+	end
 end
 
 -- Start PVH logo animation
@@ -560,6 +576,14 @@ local function ShowTransitionScreen(mode, duration)
 
 	-- Fade in elements
 	FadeInAllElements(mode)
+	
+	local TransitionSound = Instance.new("Sound")
+	TransitionSound.Parent = TransitionFrame
+	TransitionSound.SoundId = 'rbxassetid://73679547923340'
+	TransitionSound:Play()
+	TransitionSound.Ended:Connect(function()
+		TransitionSound:Destroy()
+	end)
 
 	-- Start animations
 	StartScrollingCheckerboard()
